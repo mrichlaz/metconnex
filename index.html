@@ -603,8 +603,9 @@
 
         if (!binId) return;
 
-        const res = await fetch(`${CONFIG.BIN_API_BASE}/${binId}/latest`, {
-          headers: authHeaders(false)
+        const res = await fetch(`${CONFIG.BIN_API_BASE}/${binId}/latest?ts=${Date.now()}`, {
+          headers: authHeaders(false),
+          cache: 'no-store'
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = await res.json();
@@ -637,6 +638,7 @@
           const createRes = await fetch(CONFIG.BIN_API_BASE, {
             method: 'POST',
             headers: authHeaders(true), 
+            cache: 'no-store',
             body: JSON.stringify(D)
           });
           if (!createRes.ok) throw new Error(`HTTP ${createRes.status}`);
@@ -648,6 +650,7 @@
         const response = await fetch(`${CONFIG.BIN_API_BASE}/${binId}`, {
           method: 'PUT',
           headers: authHeaders(true), 
+          cache: 'no-store',
           body: JSON.stringify(D)
         });
         
@@ -706,17 +709,17 @@
             const sponsorVars = isBreak ? '' : `--spc-bg:${sponsorStyle.bg};--spc-border:${sponsorStyle.border};--spc-icon-bg:${sponsorStyle.iconBg};--spc-icon-color:${sponsorStyle.iconColor};--spc-title-color:${sponsorStyle.title};`;
             const breakIcon = isBreak ? '◈' : sponsorStyle.icon;
             const breakIconClick = isBreak ? '' : ` onclick="event.stopPropagation();cycleSponsorStyle('${sess.id}')" title="Change sponsor style"`;
-            h+=`<div class="session-row${draggingMe?' sess-dragging':''}" data-sessid="${sess.id}" data-dayid="${day.id}">
+            h+=`<div class="session-row${draggingMe?' sess-dragging':''}" data-sessid="${sess.id}" data-dayid="${day.id}" ondragover="sessionRowOver(event,'${sess.id}','${day.id}')" ondragleave="sessionRowLeave(event,this)" ondrop="sessionRowDrop(event,'${sess.id}','${day.id}')">
               <div class="tc"><div class="tl-wrap">
-                <div class="tl-label"><span contenteditable="true" onblur="setSessLabel('${sess.id}',this.innerText)" onclick="event.stopPropagation()">${esc(sess.label)}</span></div>
+                <div class="tl-label"><span contenteditable="true" oninput="setSessLabelLive('${sess.id}',this.innerText)" onblur="setSessLabel('${sess.id}',this.innerText)" onclick="event.stopPropagation()">${esc(sess.label)}</span></div>
                 <div class="tl-time">${sStart}</div>
               </div></div>
               <div class="sc"><div class="spc-card${breakClass}" draggable="true" style="${sponsorVars}" ondragstart="ssDragStart(event,'${sess.id}','${day.id}')" ondragend="ssDragEnd()" ondragover="sessCardOver(event,'${sess.id}')" ondragleave="sessCardLeave('${sess.id}')" ondrop="sessCardDrop(event,'${sess.id}','${day.id}')">
                 <span class="drag-handle" title="Drag to reorder session" contenteditable="false">⠿</span>
                 <div class="spi"${breakIconClick}>${breakIcon}</div>
                 <div style="flex:1;min-width:0;padding-right:24px">
-                  <div class="spn-e" contenteditable="true" onblur="setBreakF('${sess.id}','title',this.innerText)" onclick="event.stopPropagation()">${esc(sess.title)}</div>
-                  <div class="spd-e" contenteditable="true" onblur="setBreakF('${sess.id}','desc',this.innerText)" onclick="event.stopPropagation()">${esc(sess.desc||'')}</div>
+                  <div class="spn-e" contenteditable="true" oninput="setBreakFLive('${sess.id}','title',this.innerText)" onblur="setBreakF('${sess.id}','title',this.innerText)" onclick="event.stopPropagation()">${esc(sess.title)}</div>
+                  <div class="spd-e" contenteditable="true" oninput="setBreakFLive('${sess.id}','desc',this.innerText)" onblur="setBreakF('${sess.id}','desc',this.innerText)" onclick="event.stopPropagation()">${esc(sess.desc||'')}</div>
                 </div>
                 <div class="spc-right">
                   <div class="side-top">
@@ -730,9 +733,9 @@
             const items=sess.items||[];
             const totalCount=items.length;
             let iCur=sStart;
-            h+=`<div class="session-row${draggingMe?' sess-dragging':''}" data-sessid="${sess.id}" data-dayid="${day.id}">
+            h+=`<div class="session-row${draggingMe?' sess-dragging':''}" data-sessid="${sess.id}" data-dayid="${day.id}" ondragover="sessionRowOver(event,'${sess.id}','${day.id}')" ondragleave="sessionRowLeave(event,this)" ondrop="sessionRowDrop(event,'${sess.id}','${day.id}')">
               <div class="tc"><div class="tl-wrap">
-                <div class="tl-label"><span contenteditable="true" onblur="setSessLabel('${sess.id}',this.innerText)" onclick="event.stopPropagation()">${esc(sess.label)}</span></div>
+                <div class="tl-label"><span contenteditable="true" oninput="setSessLabelLive('${sess.id}',this.innerText)" onblur="setSessLabel('${sess.id}',this.innerText)" onclick="event.stopPropagation()">${esc(sess.label)}</span></div>
                 <div class="tl-time">${sStart}</div>
               </div></div>
               <div class="sc"><div class="card" id="card_${sess.id}" ondragover="cardOver(event,'${sess.id}');sessCardOver(event,'${sess.id}')" ondragleave="cardLeave('${sess.id}');sessCardLeave('${sess.id}')" ondrop="cardDrop(event,'${sess.id}');sessCardDrop(event,'${sess.id}','${day.id}')">
@@ -747,7 +750,7 @@
                 <div class="ch">
                   <span class="drag-handle" title="Drag to reorder session" contenteditable="false" draggable="true" ondragstart="ssDragStart(event,'${sess.id}','${day.id}')" ondragend="ssDragEnd()">⠿</span>
                   <div class="ch-right">
-                    <span class="ct" contenteditable="true" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()" onblur="setSessTitle('${sess.id}',this.innerText)">${esc(sess.title)}</span>
+                    <span class="ct" contenteditable="true" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()" oninput="setSessTitleLive('${sess.id}',this.innerText)" onblur="setSessTitle('${sess.id}',this.innerText)">${esc(sess.title)}</span>
                     <div class="session-dur">${dur} min total</div>
                   </div>
                 </div>
@@ -759,13 +762,13 @@
               h+=`<div class="item-drop-zone" ondragover="izOver(event,this,'${sess.id}')" ondragleave="izLeave(this)" ondrop="izDrop(event,'${item.id}','${sess.id}','${day.id}')"></div>`;
               if(item.type==='speaker'){
                 const badge=item.unc ?`<button type="button" class="status-toggle unc-badge" aria-label="Mark ${esc(item.name || 'speaker')} as confirmed" onclick="event.stopPropagation();toggleUnc('${item.id}',false)">unconfirmed</button>` :`<button type="button" class="status-toggle conf-badge" aria-label="Mark ${esc(item.name || 'speaker')} as unconfirmed" onclick="event.stopPropagation();toggleUnc('${item.id}',true)">confirmed</button>`;
-                h+=`<div class="spk${draggingItem?' item-dragging':''}" data-itemid="${item.id}" draggable="true" ondragstart="itDragStart(event,'${item.id}','${sess.id}','${day.id}')" ondragend="itDragEnd()">
+                h+=`<div class="spk${draggingItem?' item-dragging':''}" data-itemid="${item.id}" draggable="true" ondragstart="itDragStart(event,'${item.id}','${sess.id}','${day.id}')" ondragend="itDragEnd()" ondragover="itemRowOver(event,'${item.id}','${sess.id}','${day.id}')" ondragleave="itemRowLeave(event,this)" ondrop="itemRowDrop(event,'${item.id}','${sess.id}','${day.id}')">
                   <span class="spk-handle">⠿</span>
                   <div class="av" id="av_${item.id}" style="background:${getColorHex(item.name && item.name !== 'New Speaker' ? colorFor(item.name) : (item._color || (item._color = getRandomColor())))}">${initials(item.name)}</div>
                   <div class="si">
-                    <div class="sn"><span class="ed" contenteditable="true" onblur="setSpkName('${item.id}',this.innerText)">${esc(item.name)}</span><span>${badge}</span></div>
-                    <div class="so-t"><span class="ed" contenteditable="true" onblur="setItemF('${item.id}','org',this.innerText)">${esc(item.org)}</span></div>
-                    <div class="st-t"><span class="ed" contenteditable="true" onblur="setItemF('${item.id}','topic',this.innerText)">${esc(item.topic)}</span></div>
+                    <div class="sn"><span class="ed" contenteditable="true" oninput="setSpkName('${item.id}',this.innerText)" onblur="setSpkName('${item.id}',this.innerText)">${esc(item.name)}</span><span>${badge}</span></div>
+                    <div class="so-t"><span class="ed" contenteditable="true" oninput="setItemFLive('${item.id}','org',this.innerText)" onblur="setItemF('${item.id}','org',this.innerText)">${esc(item.org)}</span></div>
+                    <div class="st-t"><span class="ed" contenteditable="true" oninput="setItemFLive('${item.id}','topic',this.innerText)" onblur="setItemF('${item.id}','topic',this.innerText)">${esc(item.topic)}</span></div>
                   </div>
                   <div class="spk-right">
                     <div class="side-top">
@@ -775,7 +778,7 @@
                     <span class="spk-time">${iStart}</span>
                   </div></div>`;
               } else {
-                h+=`<div class="open-slot${draggingItem?' item-dragging':''}" data-itemid="${item.id}" role="button" tabindex="0" aria-label="Activate open slot in ${esc(sess.title)}" draggable="true" ondragstart="itDragStart(event,'${item.id}','${sess.id}','${day.id}')" ondragend="itDragEnd()" onclick="activateSlot('${item.id}','${sess.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();activateSlot('${item.id}','${sess.id}')}">
+                h+=`<div class="open-slot${draggingItem?' item-dragging':''}" data-itemid="${item.id}" role="button" tabindex="0" aria-label="Activate open slot in ${esc(sess.title)}" draggable="true" ondragstart="itDragStart(event,'${item.id}','${sess.id}','${day.id}')" ondragend="itDragEnd()" ondragover="itemRowOver(event,'${item.id}','${sess.id}','${day.id}')" ondragleave="itemRowLeave(event,this)" ondrop="itemRowDrop(event,'${item.id}','${sess.id}','${day.id}')" onclick="activateSlot('${item.id}','${sess.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();activateSlot('${item.id}','${sess.id}')}">
                   <span class="spk-handle">⠿</span><span class="od"></span><span class="ol">Open slot — ${esc(sess.title)}</span>
                   <div class="open-right">
                     <div class="side-top">
@@ -823,9 +826,13 @@
     }
 
     function setDayStart(id,v){const d=findDay(id);if(d){d.startTime=v;render()}}
+    function setSessLabelLive(id,v){const s=findSess(id);if(s){s.label=v.trim();scheduleSave()}}
     function setSessLabel(id,v){const s=findSess(id);if(s){s.label=v.trim();scheduleSave()}}
+    function setSessTitleLive(id,v){const s=findSess(id);if(s){s.title=v.trim();scheduleSave()}}
     function setSessTitle(id,v){const s=findSess(id);if(s){s.title=v.trim();render()}}
+    function setBreakFLive(id,f,v){const s=findSess(id);if(s){s[f]=v.trim();scheduleSave()}}
     function setBreakF(id,f,v){const s=findSess(id);if(s){s[f]=v.trim();scheduleSave()}}
+    function setItemFLive(id,f,v){const i=findItem(id);if(i){i[f]=v.trim();scheduleSave()}}
     function setItemF(id,f,v){const i=findItem(id);if(i){i[f]=v.trim();scheduleSave()}}
     function setSpkName(id,v){
       const item=findItem(id);if(!item)return;
@@ -916,6 +923,31 @@
       return true;
     }
 
+    function moveItem(beforeId,toSessId){
+      if(!dragItem)return false;
+      const fromSess=findSess(dragItem.sessId),toSess=findSess(toSessId);
+      if(!fromSess||!toSess||!Array.isArray(fromSess.items)||!Array.isArray(toSess.items))return false;
+      const spkCount=toSess.items.filter(i=>i.type==='speaker').length;
+      if(spkCount>=5&&dragItem.sessId!==String(toSessId))return false;
+      const fromIdx=fromSess.items.findIndex(i=>String(i.id)===dragItem.itemId);
+      if(fromIdx===-1)return false;
+      if(dragItem.sessId===String(toSessId) && String(beforeId)===String(dragItem.itemId)) return false;
+      const [moved]=fromSess.items.splice(fromIdx,1);
+      if(dragItem.sessId!==String(toSessId)&&moved.type==='speaker'){
+        fromSess.items.splice(fromIdx,0,{id:mkid(),type:'open',dur:moved.dur||20});
+        const oi=toSess.items.findIndex(i=>i.type==='open');
+        if(oi!==-1)toSess.items.splice(oi,1);
+      }
+      if(beforeId==='__end__')toSess.items.push(moved);
+      else {
+        const ti=toSess.items.findIndex(i=>String(i.id)===String(beforeId));
+        toSess.items.splice(ti>=0?ti:toSess.items.length,0,moved);
+      }
+      dragItem=null;
+      render();
+      return true;
+    }
+
     async function exportSchedule(e){
       const btn = e.currentTarget;
       const originalText = btn.innerText;
@@ -989,6 +1021,24 @@
       document.querySelectorAll('.sess-drop-zone').forEach(z=>z.classList.remove('active'));
       moveSession(beforeId,toDayId);
     }
+    function sessionRowOver(e,sessId,dayId){
+      if(!dragSess||String(dragSess.sessId)===String(sessId))return;
+      e.preventDefault();e.stopPropagation();
+    }
+    function sessionRowLeave(e,el){}
+    function sessionRowDrop(e,sessId,dayId){
+      if(!dragSess)return;
+      e.preventDefault();e.stopPropagation();
+      const rect=e.currentTarget.getBoundingClientRect();
+      const before=e.clientY < rect.top + rect.height/2;
+      if(before) moveSession(sessId,dayId);
+      else {
+        const day=findDay(dayId);
+        const idx=day?.sessions?.findIndex(s=>String(s.id)===String(sessId));
+        const next = idx>=0 && idx<day.sessions.length-1 ? day.sessions[idx+1].id : '__end__';
+        moveSession(next,dayId);
+      }
+    }
     function itDragStart(e,itemId,sessId,dayId){
       if(e.target.closest&&e.target.closest('.btn-x')){e.preventDefault();return}
       if(e.target.getAttribute&&e.target.getAttribute('contenteditable')==='true'){e.preventDefault();return}
@@ -1019,22 +1069,28 @@
     function izDrop(e,beforeId,toSessId,toDayId){
       e.preventDefault();e.stopPropagation();
       document.querySelectorAll('.item-drop-zone.active').forEach(z=>z.classList.remove('active'));
-      if(!dragItem)return;
-      const fromSess=findSess(dragItem.sessId),toSess=findSess(toSessId);
-      if(!fromSess||!toSess)return;
+      moveItem(beforeId,toSessId);
+    }
+    function itemRowOver(e,itemId,sessId,dayId){
+      if(!dragItem||String(dragItem.itemId)===String(itemId))return;
+      const toSess=findSess(sessId);if(!toSess||!toSess.items)return;
       const spkCount=toSess.items.filter(i=>i.type==='speaker').length;
-      if(spkCount>=5&&dragItem.sessId!==toSessId)return;
-      const fromIdx=fromSess.items.findIndex(i=>String(i.id)===dragItem.itemId);
-      if(fromIdx===-1)return;
-      const[moved]=fromSess.items.splice(fromIdx,1);
-      if(dragItem.sessId!==toSessId&&moved.type==='speaker'){
-        fromSess.items.splice(fromIdx,0,{id:mkid(),type:'open',dur:moved.dur||20});
-        const oi=toSess.items.findIndex(i=>i.type==='open');
-        if(oi!==-1)toSess.items.splice(oi,1);
+      if(spkCount>=5&&dragItem.sessId!==String(sessId))return;
+      e.preventDefault();e.stopPropagation();
+    }
+    function itemRowLeave(e,el){}
+    function itemRowDrop(e,itemId,sessId,dayId){
+      if(!dragItem)return;
+      e.preventDefault();e.stopPropagation();
+      const rect=e.currentTarget.getBoundingClientRect();
+      const before=e.clientY < rect.top + rect.height/2;
+      if(before) moveItem(itemId,sessId);
+      else {
+        const sess=findSess(sessId);
+        const idx=sess?.items?.findIndex(i=>String(i.id)===String(itemId));
+        const next = idx>=0 && idx<sess.items.length-1 ? sess.items[idx+1].id : '__end__';
+        moveItem(next,sessId);
       }
-      if(beforeId==='__end__')toSess.items.push(moved);
-      else{const ti=toSess.items.findIndex(i=>String(i.id)===String(beforeId));toSess.items.splice(ti>=0?ti:toSess.items.length,0,moved)}
-      dragItem=null;render();
     }
     function cardOver(e,sessId){
       if(!dragItem||dragItem.sessId===sessId)return;
