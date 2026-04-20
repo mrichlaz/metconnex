@@ -306,23 +306,28 @@
   <script>
     const CONFIG = {
       USE_CLOUD: true,
-      BIN_ID: '69dd950faaba882197f74476',
-      API_KEY: '$2a$10$463txcz/Vf.xp73eqBV9MuLcKcrLcDMl5UKk5JsS9Y/OpTj10PJVm',
-      BIN_API_BASE: 'https://api.jsonbin.io/v3/b'
+      SUPABASE_URL: 'https://mxmbgcpcevwrysbbqzyv.supabase.co',
+      SUPABASE_ANON_KEY: 'sb_publishable_hSz6b_Q_ayvjfKifhxfKoQ_CeSQSezy',
+      SUPABASE_TABLE: 'schedule_docs',
+      SUPABASE_REVISIONS_TABLE: 'schedule_revisions',
+      SUPABASE_DOC_ID: 'main'
     };
 
-    const BIN_QUERY_PARAM = 'bin';
+    const DOC_QUERY_PARAM = 'doc';
+    const REVISION_DEBOUNCE_MS = 60 * 1000;
+    const REVISION_RETENTION_DAYS = 3;
     let saveTimer = null;
+    let lastRevisionSavedAt = null;
 
-    function getBinId(){
+    function getDocId(){
       const url = new URL(window.location.href);
-      return (url.searchParams.get(BIN_QUERY_PARAM) || CONFIG.BIN_ID || '').trim();
+      return (url.searchParams.get(DOC_QUERY_PARAM) || CONFIG.SUPABASE_DOC_ID || 'main').trim();
     }
 
-    function setBinId(binId){
-      if(!binId) return;
+    function setDocId(docId){
+      if(!docId) return;
       const url = new URL(window.location.href);
-      url.searchParams.set(BIN_QUERY_PARAM, binId);
+      url.searchParams.set(DOC_QUERY_PARAM, docId);
       window.history.replaceState({}, '', url.toString());
     }
 
@@ -331,14 +336,105 @@
       saveTimer = setTimeout(()=>saveData(), 250);
     }
 
-    function authHeaders(contentType=true){
-      const headers = {};
+    function isSupabaseConfigured(){
+      return !!(CONFIG.SUPABASE_URL && CONFIG.SUPABASE_ANON_KEY && !CONFIG.SUPABASE_URL.includes('YOUR_PROJECT') && !CONFIG.SUPABASE_ANON_KEY.includes('YOUR_SUPABASE_ANON_KEY'));
+    }
+
+    function supabaseHeaders(contentType=true, extra={}){
+      const headers = {
+        apikey: CONFIG.SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${CONFIG.SUPABASE_ANON_KEY}`,
+        ...extra
+      };
       if(contentType) headers['Content-Type'] = 'application/json';
-      if(CONFIG.API_KEY){
-        headers['X-Master-Key'] = CONFIG.API_KEY;
-        headers['X-Access-Key'] = CONFIG.API_KEY;
-      }
       return headers;
+    }
+
+    function supabaseDocUrl(){
+      const base = `${CONFIG.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/${CONFIG.SUPABASE_TABLE}`;
+      const params = new URLSearchParams({
+        id: `eq.${getDocId()}`
+      });
+      return `${base}?${params.toString()}`;
+    }
+
+    function cloneData(data){
+      return JSON.parse(JSON.stringify(data));
+    }
+
+    function isValidScheduleData(data){
+      return Array.isArray(data) && data.every(day=>day && typeof day === 'object' && typeof day.id === 'string' && Array.isArray(day.sessions));
+    }
+
+    function setStatus(text, color){
+      const status = document.getElementById('sync-status');
+      if(!status) return;
+      status.innerText = text;
+      if(color) status.style.color = color;
+    }
+
+    function applyLoadedData(data, source='data'){
+      if(!isValidScheduleData(data)) throw new Error(`Invalid ${source}`);
+      D.splice(0, D.length, ...cloneData(data));
+      normalizeScheduleData();
+      mergeMissingDefaults();
+      syncUid();
+    }
+
+    function formatDateTime(iso){
+      if(!iso) return 'unknown time';
+      const d = new Date(iso);
+      return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
+    }
+
+    function supabaseRevisionsUrl(){
+      return `${CONFIG.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/${CONFIG.SUPABASE_REVISIONS_TABLE}`;
+    }
+
+    function shouldCreateRevision(savedAt){
+      if(!lastRevisionSavedAt) return true;
+      const current = new Date(savedAt).getTime();
+      const previous = new Date(lastRevisionSavedAt).getTime();
+      if(Number.isNaN(current) || Number.isNaN(previous)) return true;
+      return (current - previous) >= REVISION_DEBOUNCE_MS;
+    }
+
+    async function pruneOldRevisions(){
+      const cutoff = new Date(Date.now() - (REVISION_RETENTION_DAYS * 24 * 60 * 60 * 1000)).toISOString();
+      const url = `${supabaseRevisionsUrl()}?doc_id=eq.${encodeURIComponent(getDocId())}&saved_at=lt.${encodeURIComponent(cutoff)}`;
+      const response = await fetch(url, {
+        method: 'DELETE',
+        headers: supabaseHeaders(false, {
+          Prefer: 'return=minimal'
+        }),
+        cache: 'no-store'
+      });
+      if (!response.ok) throw new Error(`Revision prune HTTP ${response.status}`);
+    }
+
+    async function saveRevisionSnapshot(savedAt){
+      const payload = [{
+        doc_id: getDocId(),
+        saved_at: savedAt,
+        data: cloneData(D)
+      }];
+      const response = await fetch(supabaseRevisionsUrl(), {
+        method: 'POST',
+        headers: supabaseHeaders(true, {
+          Prefer: 'return=representation'
+        }),
+        cache: 'no-store',
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) throw new Error(`Revision HTTP ${response.status}`);
+      const rows = await response.json();
+      lastRevisionSavedAt = savedAt;
+      try {
+        await pruneOldRevisions();
+      } catch (pruneError) {
+        console.error('supabase revision prune failed', pruneError);
+      }
+      return Array.isArray(rows) ? rows[0] : null;
     }
 
     const SPONSOR_STYLES = [
@@ -588,80 +684,78 @@
     }
     
     async function loadData() {
-      const status = document.getElementById('sync-status');
-      const binId = getBinId();
-
-      if (!CONFIG.USE_CLOUD) {
-        status.innerText = 'Memory Mode';
-        status.style.color = '#94a3b8';
+      if (!CONFIG.USE_CLOUD || !isSupabaseConfigured()) {
+        setStatus('Supabase not configured', '#94a3b8');
         return;
       }
 
       try {
-        status.innerText = binId ? 'Loading...' : 'Ready to create cloud save';
-        status.style.color = '#94a3b8';
-
-        if (!binId) return;
-
-        const res = await fetch(`${CONFIG.BIN_API_BASE}/${binId}/latest?ts=${Date.now()}`, {
-          headers: authHeaders(false),
+        setStatus('Loading from Supabase...', '#94a3b8');
+        const res = await fetch(`${supabaseDocUrl()}&select=data,updated_at,id`, {
+          headers: supabaseHeaders(false, { Accept: 'application/json' }),
           cache: 'no-store'
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const json = await res.json();
-        const data = json.record;
-        if (Array.isArray(data)) {
-          D.splice(0, D.length, ...data);
-          normalizeScheduleData();
-          mergeMissingDefaults();
-          syncUid();
-          status.innerText = 'Synced';
-          status.style.color = '#15803d';
+        const rows = await res.json();
+        const row = Array.isArray(rows) ? rows[0] : null;
+
+        if(row?.data){
+          applyLoadedData(row.data, 'Supabase data');
+          if(row.id) setDocId(row.id);
+          lastRevisionSavedAt = row.updated_at || null;
+          setStatus(`Synced from Supabase · ${formatDateTime(row.updated_at)}`, '#15803d');
+          return;
         }
+
+        setStatus('Supabase ready · first save will create doc', '#94a3b8');
       } catch (e) {
-        console.error('jsonbin.io load failed', e);
-        status.innerText = 'Load Error / 401';
-        status.style.color = '#dc2626';
+        console.error('supabase load failed', e);
+        setStatus('Supabase load error', '#dc2626');
       }
     }
 
     async function saveData() {
-      const status = document.getElementById('sync-status');
-      if (!CONFIG.USE_CLOUD) return;
+      if (!CONFIG.USE_CLOUD || !isSupabaseConfigured()) {
+        setStatus('Supabase not configured', '#94a3b8');
+        return;
+      }
 
       try {
-        status.innerText = 'Saving...';
-        status.style.color = '#2563eb';
-        let binId = getBinId();
-        
-        if (!binId) {
-          const createRes = await fetch(CONFIG.BIN_API_BASE, {
-            method: 'POST',
-            headers: authHeaders(true), 
-            cache: 'no-store',
-            body: JSON.stringify(D)
-          });
-          if (!createRes.ok) throw new Error(`HTTP ${createRes.status}`);
-          const createData = await createRes.json();
-          binId = createData?.metadata?.id || createData?.id || '';
-          setBinId(binId);
-        }
-
-        const response = await fetch(`${CONFIG.BIN_API_BASE}/${binId}`, {
-          method: 'PUT',
-          headers: authHeaders(true), 
+        setStatus('Saving to Supabase...', '#2563eb');
+        const savedAt = new Date().toISOString();
+        const payload = [{
+          id: getDocId(),
+          data: D,
+          updated_at: savedAt
+        }];
+        const response = await fetch(supabaseDocUrl(), {
+          method: 'POST',
+          headers: supabaseHeaders(true, {
+            Prefer: 'resolution=merge-duplicates,return=representation'
+          }),
           cache: 'no-store',
-          body: JSON.stringify(D)
+          body: JSON.stringify(payload)
         });
-        
+
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        
-        status.innerText = 'Synced';
-        status.style.color = '#15803d';
+        const rows = await response.json();
+        const row = Array.isArray(rows) ? rows[0] : null;
+        if(row?.id) setDocId(row.id);
+
+        try {
+          if(shouldCreateRevision(savedAt)){
+            await saveRevisionSnapshot(savedAt);
+            setStatus(`Synced + versioned · ${formatDateTime(savedAt)}`, '#15803d');
+          } else {
+            setStatus(`Synced · next version after 60s window · ${formatDateTime(savedAt)}`, '#15803d');
+          }
+        } catch (revisionError) {
+          console.error('supabase revision save failed', revisionError);
+          setStatus('Synced, but revision save failed', '#b45309');
+        }
       } catch (e) {
-        console.error('cloud save failed', e);
-        status.innerText = 'Save Error / 401';
-        status.style.color = '#dc2626';
+        console.error('supabase save failed', e);
+        setStatus('Supabase save failed', '#dc2626');
       }
     }
 
@@ -1126,7 +1220,7 @@
       syncUid();
       isInitializing = false;
       await render();
-      if (CONFIG.USE_CLOUD && (!getBinId() || hadMissingDefaults)) scheduleSave();
+      if (CONFIG.USE_CLOUD && hadMissingDefaults) scheduleSave();
     }
     init();
   </script>
