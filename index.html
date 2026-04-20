@@ -258,6 +258,19 @@
       0% { background-position: 200% 0; }
       100% { background-position: -200% 0; }
     }
+    .viewer-mode .btn-x,
+    .viewer-mode .drag-handle,
+    .viewer-mode .burger-btn,
+    .viewer-mode .burger-menu,
+    .viewer-mode .add-btn,
+    .viewer-mode .status-toggle,
+    .viewer-mode .dur-row {
+      display: none !important;
+    }
+    .viewer-mode [contenteditable="true"] {
+      pointer-events: none;
+      user-select: text;
+    }
     .export-mode .burger-wrap,
     .export-mode .btn-x,
     .export-mode .drag-handle,
@@ -314,10 +327,12 @@
     };
 
     const DOC_QUERY_PARAM = 'doc';
+    const ADMIN_TOKEN_HASH = 'f47033f59222c8620a963b9fcd394562c622c954977ccfee39455b4149898cab';
     const REVISION_DEBOUNCE_MS = 60 * 1000;
     const REVISION_RETENTION_DAYS = 3;
     let saveTimer = null;
     let lastRevisionSavedAt = null;
+    let adminMode = false;
 
     function getDocId(){
       const url = new URL(window.location.href);
@@ -331,7 +346,45 @@
       window.history.replaceState({}, '', url.toString());
     }
 
+    function getEditToken(){
+      const url = new URL(window.location.href);
+      const queryToken = url.searchParams.get('edit') || '';
+      const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash;
+      const hashParams = new URLSearchParams(hash);
+      const hashToken = hashParams.get('edit') || '';
+      return (queryToken || hashToken || '').trim();
+    }
+
+    async function sha256Hex(text){
+      const data = new TextEncoder().encode(text);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+      return Array.from(new Uint8Array(hashBuffer)).map(b=>b.toString(16).padStart(2,'0')).join('');
+    }
+
+    async function resolveAdminMode(){
+      const token = getEditToken();
+      if(!token) return false;
+      try {
+        return (await sha256Hex(token)) === ADMIN_TOKEN_HASH;
+      } catch (err) {
+        console.error('admin token check failed', err);
+        return false;
+      }
+    }
+
+    function applyAdminModeClass(){
+      document.body.classList.toggle('viewer-mode', !adminMode);
+      document.body.classList.toggle('admin-mode', adminMode);
+    }
+
+    function requireAdmin(showStatus=true){
+      if(adminMode) return true;
+      if(showStatus) setStatus('Viewer mode · add ?edit=token to unlock editing', '#b45309');
+      return false;
+    }
+
     function scheduleSave(){
+      if(!adminMode) return;
       clearTimeout(saveTimer);
       saveTimer = setTimeout(()=>saveData(), 250);
     }
@@ -703,11 +756,11 @@
           applyLoadedData(row.data, 'Supabase data');
           if(row.id) setDocId(row.id);
           lastRevisionSavedAt = row.updated_at || null;
-          setStatus(`Synced from Supabase · ${formatDateTime(row.updated_at)}`, '#15803d');
+          setStatus(`${adminMode ? 'Admin' : 'Viewer'} · synced from Supabase · ${formatDateTime(row.updated_at)}`, '#15803d');
           return;
         }
 
-        setStatus('Supabase ready · first save will create doc', '#94a3b8');
+        setStatus(`${adminMode ? 'Admin' : 'Viewer'} · Supabase ready · first save will create doc`, '#94a3b8');
       } catch (e) {
         console.error('supabase load failed', e);
         setStatus('Supabase load error', '#dc2626');
@@ -719,6 +772,7 @@
         setStatus('Supabase not configured', '#94a3b8');
         return;
       }
+      if (!requireAdmin()) return;
 
       try {
         setStatus('Saving to Supabase...', '#2563eb');
@@ -776,6 +830,7 @@
       if(!isInitializing) scheduleSave();
       const app=document.getElementById('app');
       let h='';
+      const editableAttr = adminMode ? 'true' : 'false';
       D.forEach((day,di)=>{
         let cur=day.startTime||'09:00';
         let dayEnd=day.startTime||'09:00';
@@ -787,7 +842,7 @@
           </div>
           <div class="day-start">
             <div class="day-meta"><label>Start</label>
-              <input type="time" value="${day.startTime}" onchange="setDayStart('${day.id}',this.value)">
+              <input type="time" value="${day.startTime}" onchange="setDayStart('${day.id}',this.value)" ${adminMode ? '' : 'disabled'}>
             </div>
           </div></div><div class="sessions-list">`;
         day.sessions.forEach((sess)=>{
@@ -805,15 +860,15 @@
             const breakIconClick = isBreak ? '' : ` onclick="event.stopPropagation();cycleSponsorStyle('${sess.id}')" title="Change sponsor style"`;
             h+=`<div class="session-row${draggingMe?' sess-dragging':''}" data-sessid="${sess.id}" data-dayid="${day.id}" ondragover="sessionRowOver(event,'${sess.id}','${day.id}')" ondragleave="sessionRowLeave(event,this)" ondrop="sessionRowDrop(event,'${sess.id}','${day.id}')">
               <div class="tc"><div class="tl-wrap">
-                <div class="tl-label"><span contenteditable="true" oninput="setSessLabelLive('${sess.id}',this.innerText)" onblur="setSessLabel('${sess.id}',this.innerText)" onclick="event.stopPropagation()">${esc(sess.label)}</span></div>
+                <div class="tl-label"><span contenteditable="${editableAttr}" oninput="setSessLabelLive('${sess.id}',this.innerText)" onblur="setSessLabel('${sess.id}',this.innerText)" onclick="event.stopPropagation()">${esc(sess.label)}</span></div>
                 <div class="tl-time">${sStart}</div>
               </div></div>
-              <div class="sc"><div class="spc-card${breakClass}" draggable="true" style="${sponsorVars}" ondragstart="ssDragStart(event,'${sess.id}','${day.id}')" ondragend="ssDragEnd()" ondragover="sessCardOver(event,'${sess.id}')" ondragleave="sessCardLeave('${sess.id}')" ondrop="sessCardDrop(event,'${sess.id}','${day.id}')">
+              <div class="sc"><div class="spc-card${breakClass}" draggable="${adminMode ? 'true' : 'false'}" style="${sponsorVars}" ondragstart="ssDragStart(event,'${sess.id}','${day.id}')" ondragend="ssDragEnd()" ondragover="sessCardOver(event,'${sess.id}')" ondragleave="sessCardLeave('${sess.id}')" ondrop="sessCardDrop(event,'${sess.id}','${day.id}')">
                 <span class="drag-handle" title="Drag to reorder session" contenteditable="false">⠿</span>
                 <div class="spi"${breakIconClick}>${breakIcon}</div>
                 <div style="flex:1;min-width:0;padding-right:24px">
-                  <div class="spn-e" contenteditable="true" oninput="setBreakFLive('${sess.id}','title',this.innerText)" onblur="setBreakF('${sess.id}','title',this.innerText)" onclick="event.stopPropagation()">${esc(sess.title)}</div>
-                  <div class="spd-e" contenteditable="true" oninput="setBreakFLive('${sess.id}','desc',this.innerText)" onblur="setBreakF('${sess.id}','desc',this.innerText)" onclick="event.stopPropagation()">${esc(sess.desc||'')}</div>
+                  <div class="spn-e" contenteditable="${editableAttr}" oninput="setBreakFLive('${sess.id}','title',this.innerText)" onblur="setBreakF('${sess.id}','title',this.innerText)" onclick="event.stopPropagation()">${esc(sess.title)}</div>
+                  <div class="spd-e" contenteditable="${editableAttr}" oninput="setBreakFLive('${sess.id}','desc',this.innerText)" onblur="setBreakF('${sess.id}','desc',this.innerText)" onclick="event.stopPropagation()">${esc(sess.desc||'')}</div>
                 </div>
                 <div class="spc-right">
                   <div class="side-top">
@@ -829,7 +884,7 @@
             let iCur=sStart;
             h+=`<div class="session-row${draggingMe?' sess-dragging':''}" data-sessid="${sess.id}" data-dayid="${day.id}" ondragover="sessionRowOver(event,'${sess.id}','${day.id}')" ondragleave="sessionRowLeave(event,this)" ondrop="sessionRowDrop(event,'${sess.id}','${day.id}')">
               <div class="tc"><div class="tl-wrap">
-                <div class="tl-label"><span contenteditable="true" oninput="setSessLabelLive('${sess.id}',this.innerText)" onblur="setSessLabel('${sess.id}',this.innerText)" onclick="event.stopPropagation()">${esc(sess.label)}</span></div>
+                <div class="tl-label"><span contenteditable="${editableAttr}" oninput="setSessLabelLive('${sess.id}',this.innerText)" onblur="setSessLabel('${sess.id}',this.innerText)" onclick="event.stopPropagation()">${esc(sess.label)}</span></div>
                 <div class="tl-time">${sStart}</div>
               </div></div>
               <div class="sc"><div class="card" id="card_${sess.id}" ondragover="cardOver(event,'${sess.id}');sessCardOver(event,'${sess.id}')" ondragleave="cardLeave('${sess.id}');sessCardLeave('${sess.id}')" ondrop="cardDrop(event,'${sess.id}');sessCardDrop(event,'${sess.id}','${day.id}')">
@@ -842,9 +897,9 @@
                   </div>
                 </div>
                 <div class="ch">
-                  <span class="drag-handle" title="Drag to reorder session" contenteditable="false" draggable="true" ondragstart="ssDragStart(event,'${sess.id}','${day.id}')" ondragend="ssDragEnd()">⠿</span>
+                  <span class="drag-handle" title="Drag to reorder session" contenteditable="false" draggable="${adminMode ? 'true' : 'false'}" ondragstart="ssDragStart(event,'${sess.id}','${day.id}')" ondragend="ssDragEnd()">⠿</span>
                   <div class="ch-right">
-                    <span class="ct" contenteditable="true" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()" oninput="setSessTitleLive('${sess.id}',this.innerText)" onblur="setSessTitle('${sess.id}',this.innerText)">${esc(sess.title)}</span>
+                    <span class="ct" contenteditable="${editableAttr}" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()" oninput="setSessTitleLive('${sess.id}',this.innerText)" onblur="setSessTitle('${sess.id}',this.innerText)">${esc(sess.title)}</span>
                     <div class="session-dur">${dur} min total</div>
                   </div>
                 </div>
@@ -856,13 +911,13 @@
               h+=`<div class="item-drop-zone" ondragover="izOver(event,this,'${sess.id}')" ondragleave="izLeave(this)" ondrop="izDrop(event,'${item.id}','${sess.id}','${day.id}')"></div>`;
               if(item.type==='speaker'){
                 const badge=item.unc ?`<button type="button" class="status-toggle unc-badge" aria-label="Mark ${esc(item.name || 'speaker')} as confirmed" onclick="event.stopPropagation();toggleUnc('${item.id}',false)">unconfirmed</button>` :`<button type="button" class="status-toggle conf-badge" aria-label="Mark ${esc(item.name || 'speaker')} as unconfirmed" onclick="event.stopPropagation();toggleUnc('${item.id}',true)">confirmed</button>`;
-                h+=`<div class="spk${draggingItem?' item-dragging':''}" data-itemid="${item.id}" draggable="true" ondragstart="itDragStart(event,'${item.id}','${sess.id}','${day.id}')" ondragend="itDragEnd()" ondragover="itemRowOver(event,'${item.id}','${sess.id}','${day.id}')" ondragleave="itemRowLeave(event,this)" ondrop="itemRowDrop(event,'${item.id}','${sess.id}','${day.id}')">
+                h+=`<div class="spk${draggingItem?' item-dragging':''}" data-itemid="${item.id}" draggable="${adminMode ? 'true' : 'false'}" ondragstart="itDragStart(event,'${item.id}','${sess.id}','${day.id}')" ondragend="itDragEnd()" ondragover="itemRowOver(event,'${item.id}','${sess.id}','${day.id}')" ondragleave="itemRowLeave(event,this)" ondrop="itemRowDrop(event,'${item.id}','${sess.id}','${day.id}')">
                   <span class="spk-handle">⠿</span>
                   <div class="av" id="av_${item.id}" style="background:${getColorHex(item.name && item.name !== 'New Speaker' ? colorFor(item.name) : (item._color || (item._color = getRandomColor())))}">${initials(item.name)}</div>
                   <div class="si">
-                    <div class="sn"><span class="ed" contenteditable="true" oninput="setSpkName('${item.id}',this.innerText)" onblur="setSpkName('${item.id}',this.innerText)">${esc(item.name)}</span><span>${badge}</span></div>
-                    <div class="so-t"><span class="ed" contenteditable="true" oninput="setItemFLive('${item.id}','org',this.innerText)" onblur="setItemF('${item.id}','org',this.innerText)">${esc(item.org)}</span></div>
-                    <div class="st-t"><span class="ed" contenteditable="true" oninput="setItemFLive('${item.id}','topic',this.innerText)" onblur="setItemF('${item.id}','topic',this.innerText)">${esc(item.topic)}</span></div>
+                    <div class="sn"><span class="ed" contenteditable="${editableAttr}" oninput="setSpkName('${item.id}',this.innerText)" onblur="setSpkName('${item.id}',this.innerText)">${esc(item.name)}</span><span>${badge}</span></div>
+                    <div class="so-t"><span class="ed" contenteditable="${editableAttr}" oninput="setItemFLive('${item.id}','org',this.innerText)" onblur="setItemF('${item.id}','org',this.innerText)">${esc(item.org)}</span></div>
+                    <div class="st-t"><span class="ed" contenteditable="${editableAttr}" oninput="setItemFLive('${item.id}','topic',this.innerText)" onblur="setItemF('${item.id}','topic',this.innerText)">${esc(item.topic)}</span></div>
                   </div>
                   <div class="spk-right">
                     <div class="side-top">
@@ -872,7 +927,7 @@
                     <span class="spk-time">${iStart}</span>
                   </div></div>`;
               } else {
-                h+=`<div class="open-slot${draggingItem?' item-dragging':''}" data-itemid="${item.id}" role="button" tabindex="0" aria-label="Activate open slot in ${esc(sess.title)}" draggable="true" ondragstart="itDragStart(event,'${item.id}','${sess.id}','${day.id}')" ondragend="itDragEnd()" ondragover="itemRowOver(event,'${item.id}','${sess.id}','${day.id}')" ondragleave="itemRowLeave(event,this)" ondrop="itemRowDrop(event,'${item.id}','${sess.id}','${day.id}')" onclick="activateSlot('${item.id}','${sess.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();activateSlot('${item.id}','${sess.id}')}">
+                h+=`<div class="open-slot${draggingItem?' item-dragging':''}" data-itemid="${item.id}" role="button" tabindex="0" aria-label="Activate open slot in ${esc(sess.title)}" draggable="${adminMode ? 'true' : 'false'}" ondragstart="itDragStart(event,'${item.id}','${sess.id}','${day.id}')" ondragend="itDragEnd()" ondragover="itemRowOver(event,'${item.id}','${sess.id}','${day.id}')" ondragleave="itemRowLeave(event,this)" ondrop="itemRowDrop(event,'${item.id}','${sess.id}','${day.id}')" onclick="activateSlot('${item.id}','${sess.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();activateSlot('${item.id}','${sess.id}')}">
                   <span class="spk-handle">⠿</span><span class="od"></span><span class="ol">Open slot — ${esc(sess.title)}</span>
                   <div class="open-right">
                     <div class="side-top">
@@ -914,21 +969,23 @@
     }
 
     function cycleSponsorStyle(sessId){
+      if(!requireAdmin()) return;
       const s=findSess(sessId);if(!s||isBreakSession(s))return;
       s._sponsorVariant=((s._sponsorVariant||0)+1)%SPONSOR_STYLES.length;
       render();
     }
 
-    function setDayStart(id,v){const d=findDay(id);if(d){d.startTime=v;render()}}
-    function setSessLabelLive(id,v){const s=findSess(id);if(s){s.label=v.trim();scheduleSave()}}
-    function setSessLabel(id,v){const s=findSess(id);if(s){s.label=v.trim();scheduleSave()}}
-    function setSessTitleLive(id,v){const s=findSess(id);if(s){s.title=v.trim();scheduleSave()}}
-    function setSessTitle(id,v){const s=findSess(id);if(s){s.title=v.trim();render()}}
-    function setBreakFLive(id,f,v){const s=findSess(id);if(s){s[f]=v.trim();scheduleSave()}}
-    function setBreakF(id,f,v){const s=findSess(id);if(s){s[f]=v.trim();scheduleSave()}}
-    function setItemFLive(id,f,v){const i=findItem(id);if(i){i[f]=v.trim();scheduleSave()}}
-    function setItemF(id,f,v){const i=findItem(id);if(i){i[f]=v.trim();scheduleSave()}}
+    function setDayStart(id,v){if(!requireAdmin())return;const d=findDay(id);if(d){d.startTime=v;render()}}
+    function setSessLabelLive(id,v){if(!requireAdmin(false))return;const s=findSess(id);if(s){s.label=v.trim();scheduleSave()}}
+    function setSessLabel(id,v){if(!requireAdmin(false))return;const s=findSess(id);if(s){s.label=v.trim();scheduleSave()}}
+    function setSessTitleLive(id,v){if(!requireAdmin(false))return;const s=findSess(id);if(s){s.title=v.trim();scheduleSave()}}
+    function setSessTitle(id,v){if(!requireAdmin(false))return;const s=findSess(id);if(s){s.title=v.trim();render()}}
+    function setBreakFLive(id,f,v){if(!requireAdmin(false))return;const s=findSess(id);if(s){s[f]=v.trim();scheduleSave()}}
+    function setBreakF(id,f,v){if(!requireAdmin(false))return;const s=findSess(id);if(s){s[f]=v.trim();scheduleSave()}}
+    function setItemFLive(id,f,v){if(!requireAdmin(false))return;const i=findItem(id);if(i){i[f]=v.trim();scheduleSave()}}
+    function setItemF(id,f,v){if(!requireAdmin(false))return;const i=findItem(id);if(i){i[f]=v.trim();scheduleSave()}}
     function setSpkName(id,v){
+      if(!requireAdmin(false))return;
       const item=findItem(id);if(!item)return;
       item.name=v.trim();
       const av=document.getElementById('av_'+id);
@@ -940,8 +997,9 @@
       }
       scheduleSave();
     }
-    function toggleUnc(id,checked){const i=findItem(id);if(i){i.unc=checked;render()}}
+    function toggleUnc(id,checked){if(!requireAdmin())return;const i=findItem(id);if(i){i.unc=checked;render()}}
     function openDur(el,sessId,itemId,isWrapup=false){
+      if(!requireAdmin()) return;
       const cur=parseInt(el.innerText)||20;
       el.innerHTML='';
       const inp=document.createElement('input');
@@ -965,6 +1023,7 @@
       inp.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();done()}};
     }
     function activateSlot(itemId,sessId){
+      if(!requireAdmin()) return;
       const item=findItem(itemId);if(!item)return;
       Object.assign(item,{type:'speaker',name:'New Speaker',org:'Organisation',topic:'Topic',unc:true});
       render();
@@ -973,16 +1032,18 @@
         if(el){el.focus();const r=document.createRange();r.selectNodeContents(el);const sel=window.getSelection();sel.removeAllRanges();sel.addRange(r)}
       },60);
     }
-    function addOpen(id){const s=findSess(id);if(!s||!s.items||s.items.length>=5)return;s.items.push({id:mkid(),type:'open',dur:20});render()}
-    function addSession(dayId){const d=findDay(dayId);if(!d)return;d.sessions.push({id:mkid(),label:'NEW',title:'New Session',type:'session',items:[{id:mkid(),type:'open',dur:20},{id:mkid(),type:'open',dur:20}]});render()}
-    function addBreak(dayId){const d=findDay(dayId);if(!d)return;d.sessions.push({id:mkid(),label:'BRK',title:'Break / Sponsor',type:'break',dur:30,desc:'Edit description'});render()}
+    function addOpen(id){if(!requireAdmin())return;const s=findSess(id);if(!s||!s.items||s.items.length>=5)return;s.items.push({id:mkid(),type:'open',dur:20});render()}
+    function addSession(dayId){if(!requireAdmin())return;const d=findDay(dayId);if(!d)return;d.sessions.push({id:mkid(),label:'NEW',title:'New Session',type:'session',items:[{id:mkid(),type:'open',dur:20},{id:mkid(),type:'open',dur:20}]});render()}
+    function addBreak(dayId){if(!requireAdmin())return;const d=findDay(dayId);if(!d)return;d.sessions.push({id:mkid(),label:'BRK',title:'Break / Sponsor',type:'break',dur:30,desc:'Edit description'});render()}
     function addBreakAfter(sessId,dayId){
+      if(!requireAdmin())return;
       const d=findDay(dayId);if(!d)return;
       const idx=d.sessions.findIndex(s=>String(s.id)===String(sessId));
       d.sessions.splice(idx+1,0,{id:mkid(),label:'BRK',title:'Break / Sponsor',type:'break',dur:30,desc:'Edit description'});render();
     }
-    function removeSess(sessId,dayId){closeBurger();const d=findDay(dayId);if(!d)return;d.sessions=d.sessions.filter(s=>String(s.id)!==String(sessId));render()}
+    function removeSess(sessId,dayId){if(!requireAdmin())return;closeBurger();const d=findDay(dayId);if(!d)return;d.sessions=d.sessions.filter(s=>String(s.id)!==String(sessId));render()}
     function removeItem(itemId,sessId){
+      if(!requireAdmin())return;
       const s=findSess(sessId);if(!s||!s.items)return;
       const idx=s.items.findIndex(i=>String(i.id)===String(itemId));if(idx===-1)return;
       const item=s.items[idx];
@@ -991,6 +1052,7 @@
       render();
     }
     function toggleBurger(e,id){
+      if(!requireAdmin()) return;
       e.stopPropagation();
       const m=document.getElementById('bm_'+id);if(!m)return;
       const was=m.classList.contains('open');closeBurger();
@@ -999,6 +1061,7 @@
     function closeBurger(){if(openBurger){const m=document.getElementById('bm_'+openBurger);if(m)m.classList.remove('open');openBurger=null}}
 
     function moveSession(beforeId,toDayId){
+      if(!adminMode) return false;
       if(!dragSess)return false;
       const fromDay=findDay(dragSess.dayId),toDay=findDay(toDayId);
       if(!fromDay||!toDay)return false;
@@ -1018,6 +1081,7 @@
     }
 
     function moveItem(beforeId,toSessId){
+      if(!adminMode) return false;
       if(!dragItem)return false;
       const fromSess=findSess(dragItem.sessId),toSess=findSess(toSessId);
       if(!fromSess||!toSess||!Array.isArray(fromSess.items)||!Array.isArray(toSess.items))return false;
@@ -1087,6 +1151,7 @@
     document.addEventListener('click',closeBurger);
 
     function ssDragStart(e,sessId,dayId){
+      if(!adminMode){e.preventDefault();return}
       if(e.target.closest&&e.target.closest('.btn-x')){e.preventDefault();return}
       if(e.target.getAttribute&&e.target.getAttribute('contenteditable')==='true'){e.preventDefault();return}
       if(dragItem){e.preventDefault();return}
@@ -1104,6 +1169,7 @@
       dragSess=null;
     }
     function szOver(e,el){
+      if(!adminMode) return;
       if(!dragSess)return;
       e.preventDefault();e.stopPropagation();
       document.querySelectorAll('.sess-drop-zone').forEach(z=>z.classList.remove('active'));
@@ -1111,16 +1177,19 @@
     }
     function szLeave(el){el.classList.remove('active')}
     function szDrop(e,beforeId,toDayId){
+      if(!adminMode) return;
       e.preventDefault();e.stopPropagation();
       document.querySelectorAll('.sess-drop-zone').forEach(z=>z.classList.remove('active'));
       moveSession(beforeId,toDayId);
     }
     function sessionRowOver(e,sessId,dayId){
+      if(!adminMode) return;
       if(!dragSess||String(dragSess.sessId)===String(sessId))return;
       e.preventDefault();e.stopPropagation();
     }
     function sessionRowLeave(e,el){}
     function sessionRowDrop(e,sessId,dayId){
+      if(!adminMode) return;
       if(!dragSess)return;
       e.preventDefault();e.stopPropagation();
       const rect=e.currentTarget.getBoundingClientRect();
@@ -1134,6 +1203,7 @@
       }
     }
     function itDragStart(e,itemId,sessId,dayId){
+      if(!adminMode){e.preventDefault();return}
       if(e.target.closest&&e.target.closest('.btn-x')){e.preventDefault();return}
       if(e.target.getAttribute&&e.target.getAttribute('contenteditable')==='true'){e.preventDefault();return}
       if(dragSess){e.preventDefault();return}
@@ -1151,6 +1221,7 @@
       dragItem=null;render();
     }
     function izOver(e,el,toSessId){
+      if(!adminMode) return;
       if(!dragItem)return;
       const toSess=findSess(toSessId);if(!toSess||!toSess.items)return;
       const spkCount=toSess.items.filter(i=>i.type==='speaker').length;
@@ -1161,11 +1232,13 @@
     }
     function izLeave(el){el.classList.remove('active')}
     function izDrop(e,beforeId,toSessId,toDayId){
+      if(!adminMode) return;
       e.preventDefault();e.stopPropagation();
       document.querySelectorAll('.item-drop-zone.active').forEach(z=>z.classList.remove('active'));
       moveItem(beforeId,toSessId);
     }
     function itemRowOver(e,itemId,sessId,dayId){
+      if(!adminMode) return;
       if(!dragItem||String(dragItem.itemId)===String(itemId))return;
       const toSess=findSess(sessId);if(!toSess||!toSess.items)return;
       const spkCount=toSess.items.filter(i=>i.type==='speaker').length;
@@ -1174,6 +1247,7 @@
     }
     function itemRowLeave(e,el){}
     function itemRowDrop(e,itemId,sessId,dayId){
+      if(!adminMode) return;
       if(!dragItem)return;
       e.preventDefault();e.stopPropagation();
       const rect=e.currentTarget.getBoundingClientRect();
@@ -1187,6 +1261,7 @@
       }
     }
     function cardOver(e,sessId){
+      if(!adminMode) return;
       if(!dragItem||dragItem.sessId===sessId)return;
       const s=findSess(sessId);if(!s)return;
       if(s.items.filter(i=>i.type==='speaker').length>=5)return;
@@ -1197,6 +1272,7 @@
     function cardDrop(e,sessId){document.getElementById('card_'+sessId)?.classList.remove('drag-over')}
 
     function sessCardOver(e,sessId){
+      if(!adminMode) return;
       if(!dragSess||String(dragSess.sessId)===String(sessId))return;
       e.preventDefault();
       document.getElementById('card_'+sessId)?.classList.add('drag-over');
@@ -1205,6 +1281,7 @@
       document.getElementById('card_'+sessId)?.classList.remove('drag-over');
     }
     function sessCardDrop(e,sessId,dayId){
+      if(!adminMode) return;
       if(!dragSess)return;
       e.preventDefault();
       e.stopPropagation();
@@ -1213,6 +1290,8 @@
     }
 
     async function init() {
+      adminMode = await resolveAdminMode();
+      applyAdminModeClass();
       renderSkeleton();
       await loadData();
       normalizeScheduleData();
