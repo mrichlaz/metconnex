@@ -102,6 +102,12 @@
     .ch-right { flex: 1; min-width: 0; }
     .ct { font-size: 15px; font-weight: 600; line-height: 1.4; outline: none; display: block; width: 100%; }
     .session-dur { font-size: 12px; color: var(--color-text-tertiary); margin-top: 4px; }
+    .session-meta-right { margin-left: auto; min-width: 220px; max-width: 240px; }
+    .moderator-box { border: 1px solid var(--color-border); background: #fff; border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
+    .moderator-kicker { font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-text-tertiary); }
+    .moderator-line { font-size: 13px; line-height: 1.35; color: var(--color-text-primary); outline: none; border-bottom: 1px dashed transparent; min-height: 18px; }
+    .moderator-line:hover, .moderator-line:focus { border-bottom-color: var(--color-accent); }
+    .moderator-line.subtle { font-size: 12px; color: var(--color-text-secondary); }
     .spc-card { background: var(--status-break-bg); border: 2px solid var(--status-break-border); border-radius: 14px; padding: 8px 10px; display: flex; align-items: center; gap: 10px; cursor: grab; box-shadow: var(--shadow-sm); position: relative; width: 100%; max-width: 100%; margin-bottom: 8px; }
     .spc-card.spc-sponsor { background: var(--spc-bg, #fffbeb); border-color: var(--spc-border, #fcd34d); }
     .spc-card.spc-sponsor .spi { background: var(--spc-icon-bg, #fde68a); color: var(--spc-icon-color, #92400e); opacity: 1; cursor: pointer; }
@@ -199,6 +205,8 @@
       .spc-card { padding: 8px 10px; flex-wrap: wrap; align-items: flex-start; }
       .card, .spc-card { width: 100%; max-width: 100%; }
       .sc { padding: 0 0 2px 16px; min-width: 0; }
+      .ch { flex-direction: column; }
+      .session-meta-right { margin-left: 0; width: 100%; max-width: none; min-width: 0; }
       .spc-right, .open-right, .spk-right {
         margin-left: 0;
         margin-top: 8px;
@@ -518,6 +526,7 @@
     function initials(n){return((n||'').split(' ').filter(Boolean).map(w=>w[0]).join('').slice(0,2).toUpperCase())||'?'}
     function timeAdd(b,m){const[h,mm]=(b||'09:00').split(':').map(Number);const t=h*60+mm+m;return String(Math.floor(t/60)).padStart(2,'0')+':'+String(t%60).padStart(2,'0')}
     function esc(s){return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+    function attrEsc(s){return esc(s).replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
     let uid=300;function mkid(){return++uid}
     function sessTotal(s){
   if(s.type==='break')return s.dur||30;
@@ -599,7 +608,23 @@
 
     const DEFAULT_D = JSON.parse(JSON.stringify(D));
 
-    function mergeMissingDefaults(){
+// Moderator data structure
+function ensureModeratorData() {
+  D.forEach(day => {
+    day.sessions?.forEach(sess => {
+      if (sess.type === 'session' && !sess.moderator) {
+        sess.moderator = { name: '', org: '' };
+      } else if (sess.type === 'session' && sess.moderator) {
+        sess.moderator = {
+          name: sess.moderator.name || '',
+          org: sess.moderator.org || ''
+        };
+      }
+    });
+  });
+}
+
+function mergeMissingDefaults(){
       const missing = DEFAULT_D.filter(defaultDay=>!D.some(day=>day.id===defaultDay.id));
       if(!missing.length) return false;
       D.unshift(...missing.map(day=>JSON.parse(JSON.stringify(day))));
@@ -645,6 +670,7 @@
     }
 
     function normalizeScheduleData(){
+ ensureModeratorData();
       D.forEach(day=>{
         if(!Array.isArray(day.sessions)) day.sessions = [];
         day.sessions = day.sessions.map(sess=>{
@@ -679,7 +705,11 @@
               dur: parseInt(item.dur) || 20,
               _color: item._color
             })),
-            wrapupDur: parseInt(sess.wrapupDur) || 10
+            wrapupDur: parseInt(sess.wrapupDur) || 10,
+            moderator: {
+              name: sess.moderator?.name || '',
+              org: sess.moderator?.org || ''
+            }
           };
         });
       });
@@ -902,6 +932,13 @@
                     <span class="ct" contenteditable="${editableAttr}" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()" oninput="setSessTitleLive('${sess.id}',this.innerText)" onblur="setSessTitle('${sess.id}',this.innerText)">${esc(sess.title)}</span>
                     <div class="session-dur">${dur} min total</div>
                   </div>
+                  <div class="session-meta-right">
+                    <div class="moderator-box">
+                      <div class="moderator-kicker">Moderator</div>
+                      <div class="moderator-line" contenteditable="${editableAttr}" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()" oninput="setModeratorField('${sess.id}','name',this.innerText)" onblur="setModeratorField('${sess.id}','name',this.innerText)">${esc(sess.moderator?.name || 'Fill moderator name')}</div>
+                      <div class="moderator-line subtle" contenteditable="${editableAttr}" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()" oninput="setModeratorField('${sess.id}','org',this.innerText)" onblur="setModeratorField('${sess.id}','org',this.innerText)">${esc(sess.moderator?.org || 'Fill moderator organization')}</div>
+                    </div>
+                  </div>
                 </div>
                 <div class="sl">`;
             items.forEach((item)=>{
@@ -997,6 +1034,13 @@
       }
       scheduleSave();
     }
+    function setModeratorField(sessId,field,value){
+      if(!requireAdmin(false)) return;
+      const s=findSess(sessId);if(!s||s.type!=='session') return;
+      if(!s.moderator) s.moderator={name:'',org:'',assigned:false};
+      s.moderator[field]=(value||'').trim();
+      scheduleSave();
+    }
     function toggleUnc(id,checked){if(!requireAdmin())return;const i=findItem(id);if(i){i.unc=checked;render()}}
     function openDur(el,sessId,itemId,isWrapup=false){
       if(!requireAdmin()) return;
@@ -1033,7 +1077,7 @@
       },60);
     }
     function addOpen(id){if(!requireAdmin())return;const s=findSess(id);if(!s||!s.items||s.items.length>=5)return;s.items.push({id:mkid(),type:'open',dur:20});render()}
-    function addSession(dayId){if(!requireAdmin())return;const d=findDay(dayId);if(!d)return;d.sessions.push({id:mkid(),label:'NEW',title:'New Session',type:'session',items:[{id:mkid(),type:'open',dur:20},{id:mkid(),type:'open',dur:20}]});render()}
+    function addSession(dayId){if(!requireAdmin())return;const d=findDay(dayId);if(!d)return;d.sessions.push({id:mkid(),label:'NEW',title:'New Session',type:'session',items:[{id:mkid(),type:'open',dur:20},{id:mkid(),type:'open',dur:20}],moderator:{name:'',org:''}});render()}
     function addBreak(dayId){if(!requireAdmin())return;const d=findDay(dayId);if(!d)return;d.sessions.push({id:mkid(),label:'BRK',title:'Break / Sponsor',type:'break',dur:30,desc:'Edit description'});render()}
     function addBreakAfter(sessId,dayId){
       if(!requireAdmin())return;
